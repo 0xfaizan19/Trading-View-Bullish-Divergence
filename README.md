@@ -12,7 +12,7 @@ Finds weekly bullish RSI divergences, where price makes a lower low while RSI ma
 
    | Colour | Hex | When |
    |---|---|---|
-   | Yellow | `#FFEB3B` | 1st divergence |
+   | Yellow | `#E6B800` dark golden on the RSI line, `#FFEB3B` bright on the price chart | 1st divergence |
    | Orange | `#FF9800` | 2nd divergence |
    | Light red | `#FF5252` | 3rd divergence |
    | Red | `#E50000` | RSI low from 33 to 35 (or any 4th+ divergence) |
@@ -25,7 +25,7 @@ Every level, colour, price-chart bar thickness (default 2; the RSI line is alway
 
 ## Files
 
-- `bullish_divergence.pine`: the indicator (saved in TradingView as "Bullish Divergence · Weekly", script version 21). To use it, open the Pine Editor in TradingView, paste the file, save and add it to a weekly chart.
+- `bullish_divergence.pine`: the indicator (saved in TradingView as "Bullish Divergence · Weekly", script version 23). To use it, open the Pine Editor in TradingView, paste the file, save and add it to a weekly chart.
 - `versions/`: the trial looks and an older version, kept for reference.
 - `LICENSE`: MIT.
 - `backtest/div_lab.js`: a Node copy of the logic for Yahoo weekly bars. On HIMS, SPY and META it matched TradingView divergence for divergence (Nov 13 2026).

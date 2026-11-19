@@ -36,7 +36,7 @@ int    pWin     = input.int(1, "Match the price low within ± weeks", minval = 0
 int    maxAge   = input.int(52, "Setup lasts (weeks after the setup low)", minval = 5, maxval = 260, group = G1, display = display.none, tooltip = "A divergence must form within this many weeks of the setup low. After that the setup ends, so a long slide isn't compared with a low from long ago.")
 
 string G2 = "② Colours (weakest → strongest)"
-color  c1   = input.color(#FFEB3B, "1 · Yellow · 1st divergence", group = G2)
+color  c1   = input.color(#E6B800, "1 · Yellow · 1st divergence (RSI line)", group = G2)   // darker golden yellow in the RSI pane
 color  c2   = input.color(#FF9800, "2 · Orange · 2nd divergence", group = G2)
 color  c3   = input.color(#FF5252, "3 · Light red · 3rd divergence", group = G2)
 color  c4   = input.color(#E50000, "4 · Red · RSI low in the red band, or 4th+ divergence", group = G2)
@@ -46,6 +46,7 @@ string G3 = "③ Display"
 bool   showPx    = input.bool(true, "Draw the bars on the price chart", group = G3, display = display.none)
 int    lineW     = input.int(2, "Price-chart bar thickness", minval = 1, maxval = 6, group = G3, display = display.none)
 color  cBand     = input.color(color.new(#7E57C2, 93), "RSI 30–70 band", group = G3, display = display.none)
+color  c1Px      = input.color(#FFEB3B, "Yellow on the price chart (1st divergence)", group = G3, display = display.none)   // the price-chart bar keeps the bright yellow
 
 // ───────────────────────────── HELPERS ─────────────────────────────
 // colour step of a divergence: by count (1st, 2nd, 3rd, 4th+), raised by its RSI level
@@ -128,7 +129,7 @@ if not na(pl) and closed
         // price chart: a flat bar from the bottom of the previous low's candle to the divergence-low candle
         if showPx
             float lvl = low[bar_index - lastPBar]
-            line.new(lastPBar, lvl, ppb, lvl, color = c, width = lineW, force_overlay = true)
+            line.new(lastPBar, lvl, ppb, lvl, color = divTier == 1 ? c1Px : c, width = lineW, force_overlay = true)
         lastBar  := pb
         lastRsi  := pr
         lastPBar := ppb
