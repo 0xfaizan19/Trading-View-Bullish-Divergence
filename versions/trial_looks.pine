@@ -1,0 +1,290 @@
+//@version=6
+// ╔════════════════════════════════════════════════════════════════════════╗
+// ║  BULLISH DIVERGENCE v1.0 · Weekly RSI                                  ║
+// ║  Price makes a lower low while RSI makes a higher low.                 ║
+// ║   • A setup starts only at an RSI swing low of 31 or under.            ║
+// ║     If RSI never got that low, nothing is drawn.                       ║
+// ║   • Every later swing low where price makes a lower low while RSI      ║
+// ║     stays above the setup low is a divergence, drawn on the RSI pane   ║
+// ║     and on the price chart as a coloured line (no labels). The colour: ║
+// ║        1st divergence ............ yellow                              ║
+// ║        2nd divergence ............ orange                              ║
+// ║        3rd divergence ............ light red                           ║
+// ║        RSI low 33 to 35 .......... red  (also any 4th+ divergence)     ║
+// ║        RSI low above 35 .......... dark red                            ║
+// ║   • An RSI low under the setup low restarts the setup there. A setup   ║
+// ║     ends 52 weeks after its setup low.                                 ║
+// ║  A swing low is confirmed 2 closed weeks after it prints, and only     ║
+// ║  closed weekly bars are used, so nothing repaints once drawn.          ║
+// ╚════════════════════════════════════════════════════════════════════════╝
+indicator("Bullish Divergence · Weekly", shorttitle = "Bull Div", overlay = false, max_lines_count = 500, max_polylines_count = 100, max_bars_back = 400)
+
+// ───────────────────────────── INPUTS ─────────────────────────────
+string G1 = "① Setup"
+int    rsiLen   = input.int(14, "RSI length", minval = 2, group = G1, display = display.none)
+float  startMax = input.float(31.0, "Setup needs an RSI low of at most", minval = 5.0, maxval = 50.0, step = 0.5, group = G1, display = display.none, tooltip = "A setup starts only when an RSI swing low is at or under this level. Divergences that form while the lowest RSI stays above it are ignored.")
+float  redLvl   = input.float(33.0, "Red from an RSI low of", minval = 5.0, maxval = 80.0, step = 0.5, group = G1, display = display.none, tooltip = "A divergence whose RSI low is from this level up to the dark-red level is red.")
+float  darkLvl  = input.float(35.0, "Dark red above an RSI low of", minval = 5.0, maxval = 80.0, step = 0.5, group = G1, display = display.none, tooltip = "A divergence whose RSI low is above this level is dark red.")
+string pSrc     = input.string("Candle low (wick)", "Price low uses", options = ["Candle low (wick)", "Weekly close"], group = G1, display = display.none, tooltip = "Whether a price 'lower low' compares the weekly wicks or the weekly closes.")
+int    lbL      = input.int(5, "Swing low · weeks before it", minval = 1, maxval = 30, group = G1, display = display.none, tooltip = "An RSI low counts as a swing low when it is lower than the RSI of this many weeks before it...")
+int    lbR      = input.int(2, "Swing low · weeks after it (delay)", minval = 1, maxval = 10, group = G1, display = display.none, tooltip = "...and lower than the RSI of this many closed weeks after it. This is also how many weeks after the low the divergence shows up.")
+int    pWin     = input.int(1, "Match the price low within ± weeks", minval = 0, maxval = 3, group = G1, display = display.none, tooltip = "The price low of a swing is the lowest price within this many weeks either side of the RSI low (the two often land a week apart). Capped at the 'weeks after it' setting.")
+int    maxAge   = input.int(52, "Setup lasts (weeks after the setup low)", minval = 5, maxval = 260, group = G1, display = display.none, tooltip = "A divergence must form within this many weeks of the setup low. After that the setup ends, so a long slide isn't compared with a low from long ago.")
+
+string G2 = "② Colours (weakest → strongest)"
+color  c1   = input.color(#FFEB3B, "1 · Yellow · 1st divergence", group = G2)
+color  c2   = input.color(#FF9800, "2 · Orange · 2nd divergence", group = G2)
+color  c3   = input.color(#FF5252, "3 · Light red · 3rd divergence", group = G2)
+color  c4   = input.color(#E50000, "4 · Red · RSI low in the red band, or 4th+ divergence", group = G2)
+color  c5   = input.color(#9B0000, "5 · Dark red · RSI low above the dark-red level", group = G2)
+
+string G3 = "③ Display"
+string look      = input.string("Current lines", "Look (trial)", options = ["Current lines", "A · Ribbon", "B · Traced path", "C · Candle paint", "D · Ribbon above", "E · Traced highs", "F · Roof bars", "G · Floor bars"], group = G3, display = display.none, tooltip = "Temporary: lets you compare looks before one is made permanent.\nA · Ribbon: a soft see-through band under the lows on both panes.\nB · Traced path: the colour follows the actual RSI line and the candle lows between the two lows.\nC · Candle paint: the divergence-low candle is painted in its colour, and the RSI line lights up in that colour until RSI gets back above 50.\nD · Ribbon above: the see-through band sits above the candles, sloping down like the lows.\nE · Traced highs: the colour follows the candle highs, just above them.\nF · Roof bars: a flat coloured bar above the candles over each divergence stretch; the RSI line lights up like C.\nG · Floor bars: like F, but the flat bar starts at the bottom of the first candle (the previous low) and runs to the divergence-low candle.")
+bool   showPx    = input.bool(true, "Draw divergences on the price chart", group = G3, display = display.none)
+int    lineW     = input.int(4, "Price-chart line thickness", minval = 1, maxval = 6, group = G3, display = display.none)   // RSI-pane lines are always 1 (thinnest)
+float  gapAtr    = input.float(0.5, "Price-chart lines · gap below the lows (× weekly ATR)", minval = 0.0, maxval = 3.0, step = 0.1, group = G3, display = display.none, tooltip = "Draws the price-chart lines this far under the candle lows so the bottoms of the candles stay visible. 1 = one average weekly range. 0 = right on the lows.")
+color  cBand     = input.color(color.new(#7E57C2, 93), "RSI 30–70 band", group = G3, display = display.none)
+
+// ───────────────────────────── HELPERS ─────────────────────────────
+// colour step of a divergence: by count (1st, 2nd, 3rd, 4th+), raised by its RSI level
+f_tier(int k, float r) =>
+    int t = math.min(k, 4)
+    if r > darkLvl
+        t := 5
+    else if r >= redLvl
+        t := math.max(t, 4)
+    t
+
+f_col(int t) =>
+    switch t
+        1 => c1
+        2 => c2
+        3 => c3
+        4 => c4
+        => c5
+
+f_name(int t) =>
+    switch t
+        1 => "Yellow"
+        2 => "Orange"
+        3 => "Light red"
+        4 => "Red"
+        => "Dark red"
+
+f_ord(int k) =>
+    k == 1 ? "1st" : k == 2 ? "2nd" : k == 3 ? "3rd" : str.tostring(k) + "th"
+
+// ───────────────────────────── CORE ─────────────────────────────
+float rsi  = ta.rsi(close, rsiLen)
+float pLow = pSrc == "Weekly close" ? close : low
+int   w    = math.min(pWin, lbR)
+int   wLen = 2 * w + 1
+float pMin = ta.lowest(pLow, wLen)
+int   pOff = ta.lowestbars(pLow, wLen)
+float pl   = ta.pivotlow(rsi, lbL, lbR)
+float atrV = ta.atr(14)
+
+// a week counts only once it has closed (also when the chart loads mid-week)
+bool closed = barstate.isconfirmed and not (barstate.islast and not barstate.isrealtime and timenow < time_close)
+
+var int   nDiv     = -1     // -1 no setup · 0 setup low only · k = divergences so far
+var int   setBar   = na
+var float setRsi   = na
+var int   setPBar  = na
+var float setPx    = na
+var int   lastBar  = na     // last low of the setup: RSI pane x / y
+var float lastRsi  = na
+var int   lastPBar = na     // and price chart x / y
+var float lastPx   = na
+var int   curTier  = 0
+// every low of the current setup (setup low first), to draw each divergence from
+var array<int>   chBar  = array.new<int>()
+var array<float> chRsi  = array.new<float>()
+var array<int>   chPBar = array.new<int>()
+var array<float> chPx   = array.new<float>()
+var array<float> chPy   = array.new<float>()    // where the price-chart line is drawn: below the low
+
+bool newSetup = false
+bool newDiv   = false
+int  divTier  = 0
+
+// look C: the RSI line stays lit in the divergence colour until RSI closes back above 50
+var int litTier = 0
+if litTier > 0 and rsi > 50
+    litTier := 0
+
+if not na(pl) and closed
+    int   pb  = bar_index - lbR
+    float pr  = pl
+    float pp  = pMin[lbR - w]
+    int   ppb = bar_index - (lbR - w) - math.abs(pOff[lbR - w])
+    float py  = pp - gapAtr * nz(atrV[bar_index - ppb])
+
+    if nDiv >= 0 and pb - setBar > maxAge
+        nDiv := -1
+
+    if nDiv >= 0 and pr > setRsi and pp < lastPx
+        // ── divergence: price lower low, RSI still above the setup low ──
+        // drawn from the latest low of the setup whose RSI is below this one
+        int j = array.size(chRsi) - 1
+        while j > 0 and array.get(chRsi, j) >= pr
+            j -= 1
+        int   rBar  = array.get(chBar, j)
+        float rRsi  = array.get(chRsi, j)
+        int   rPBar = array.get(chPBar, j)
+        float rPx   = array.get(chPx, j)
+        float rPy   = array.get(chPy, j)
+        nDiv    += 1
+        divTier := f_tier(nDiv, pr)
+        curTier := divTier
+        color c  = f_col(divTier)
+        if look == "Current lines"
+            line.new(rBar, rRsi, pb, pr, color = c, width = 1)          // RSI pane: thinnest line
+            if showPx
+                line.new(rPBar, rPy, ppb, py, color = c, width = lineW, force_overlay = true)
+        else if look == "A · Ribbon"
+            // a see-through band whose top edge runs between the two lows
+            float rH = 4.0
+            line rTop = line.new(rBar, rRsi, pb, pr, color = c, width = 1)
+            line rBot = line.new(rBar, rRsi - rH, pb, pr - rH, color = color.new(c, 100), width = 1)
+            linefill.new(rTop, rBot, color.new(c, 55))
+            if showPx
+                float h1 = 0.6 * nz(atrV[bar_index - rPBar])
+                float h2 = 0.6 * nz(atrV[bar_index - ppb])
+                line pTop = line.new(rPBar, rPy, ppb, py, color = c, width = 1, force_overlay = true)
+                line pBot = line.new(rPBar, rPy - h1, ppb, py - h2, color = color.new(c, 100), width = 1, force_overlay = true)
+                linefill.new(pTop, pBot, color.new(c, 50))
+        else if look == "B · Traced path"
+            // the colour follows the real RSI line and the candle lows, from the setup's previous low to this one,
+            // so successive divergences run on one after another instead of painting over each other
+            array<chart.point> rPts = array.new<chart.point>()
+            for k = lastBar to pb
+                array.push(rPts, chart.point.from_index(k, rsi[bar_index - k]))
+            polyline.new(rPts, line_color = c, line_width = 3)
+            if showPx
+                array<chart.point> pPts = array.new<chart.point>()
+                for k = lastPBar to ppb
+                    array.push(pPts, chart.point.from_index(k, low[bar_index - k] - gapAtr * nz(atrV[bar_index - k])))
+                polyline.new(pPts, line_color = c, line_width = 3, force_overlay = true)
+        else if look == "D · Ribbon above"
+            // RSI pane: same ribbon as A
+            line rTop = line.new(rBar, rRsi, pb, pr, color = c, width = 1)
+            line rBot = line.new(rBar, rRsi - 4.0, pb, pr - 4.0, color = color.new(c, 100), width = 1)
+            linefill.new(rTop, rBot, color.new(c, 55))
+            if showPx
+                // a band sloping like the lows, lifted so every candle in between stays under it (log-scale straight line)
+                float a1 = high[bar_index - rPBar] + gapAtr * nz(atrV[bar_index - rPBar])
+                float a2 = high[bar_index - ppb] + gapAtr * nz(atrV[bar_index - ppb])
+                float lift = 1.0
+                for k = rPBar to ppb
+                    float t    = float(k - rPBar) / float(math.max(ppb - rPBar, 1))
+                    float yk   = math.exp(math.log(a1) + (math.log(a2) - math.log(a1)) * t)
+                    float need = high[bar_index - k] + gapAtr * nz(atrV[bar_index - k])
+                    if need > yk * lift
+                        lift := need / yk
+                a1 := a1 * lift
+                a2 := a2 * lift
+                float h1 = 0.6 * nz(atrV[bar_index - rPBar])
+                float h2 = 0.6 * nz(atrV[bar_index - ppb])
+                line pLo = line.new(rPBar, a1, ppb, a2, color = c, width = 1, force_overlay = true)
+                line pHi = line.new(rPBar, a1 + h1, ppb, a2 + h2, color = color.new(c, 100), width = 1, force_overlay = true)
+                linefill.new(pLo, pHi, color.new(c, 50))
+        else if look == "E · Traced highs"
+            // RSI pane: traced like B; price chart: the colour follows the candle highs, just above them
+            array<chart.point> rPts = array.new<chart.point>()
+            for k = lastBar to pb
+                array.push(rPts, chart.point.from_index(k, rsi[bar_index - k]))
+            polyline.new(rPts, line_color = c, line_width = 3)
+            if showPx
+                array<chart.point> pPts = array.new<chart.point>()
+                for k = lastPBar to ppb
+                    array.push(pPts, chart.point.from_index(k, high[bar_index - k] + gapAtr * nz(atrV[bar_index - k])))
+                polyline.new(pPts, line_color = c, line_width = 3, force_overlay = true)
+        else if look == "F · Roof bars" or look == "G · Floor bars"
+            // price chart: a flat bar over the stretch from the setup's previous low to this low
+            //   F: above every candle in it · G: level with the bottom of the FIRST candle (the setup's previous low)
+            if showPx
+                float lvl = 0.0
+                if look == "F · Roof bars"
+                    for k = lastPBar to ppb
+                        lvl := math.max(lvl, high[bar_index - k] + gapAtr * nz(atrV[bar_index - k]))
+                else
+                    lvl := low[bar_index - lastPBar]
+                line.new(lastPBar, lvl, ppb, lvl, color = c, width = lineW, force_overlay = true)
+            // RSI pane: lit like C
+            array<chart.point> fPts = array.new<chart.point>()
+            for k = pb to bar_index
+                array.push(fPts, chart.point.from_index(k, rsi[bar_index - k]))
+            polyline.new(fPts, line_color = c, line_width = 3)
+            litTier := divTier
+        else
+            // C: RSI path from the low to this week in the colour; the plot below keeps it lit after that
+            array<chart.point> cPts = array.new<chart.point>()
+            for k = pb to bar_index
+                array.push(cPts, chart.point.from_index(k, rsi[bar_index - k]))
+            polyline.new(cPts, line_color = c, line_width = 3)
+            litTier := divTier
+        lastBar  := pb
+        lastRsi  := pr
+        lastPBar := ppb
+        lastPx   := pp
+        array.push(chBar, pb)
+        array.push(chRsi, pr)
+        array.push(chPBar, ppb)
+        array.push(chPx, pp)
+        array.push(chPy, py)
+        newDiv   := true
+
+    else if pr <= startMax and (nDiv < 0 or pr <= setRsi)
+        // ── new setup low (a lower one replaces a setup that has no divergence yet) ──
+        nDiv     := 0
+        curTier  := 0
+        setBar   := pb
+        setRsi   := pr
+        setPBar  := ppb
+        setPx    := pp
+        lastBar  := pb
+        lastRsi  := pr
+        lastPBar := ppb
+        lastPx   := pp
+        array.clear(chBar)
+        array.clear(chRsi)
+        array.clear(chPBar)
+        array.clear(chPx)
+        array.clear(chPy)
+        array.push(chBar, pb)
+        array.push(chRsi, pr)
+        array.push(chPBar, ppb)
+        array.push(chPx, pp)
+        array.push(chPy, py)
+        newSetup := true
+
+// ───────────────────────────── PLOTS ─────────────────────────────
+plot(rsi, "RSI", color = #7E57C2, linewidth = 1)    // thinnest line Pine allows
+// light purple band between 30 and 70; its edge lines are invisible
+hTop = hline(70, "70", color = color.new(#7E57C2, 100), display = display.none)
+hBot = hline(30, "30", color = color.new(#7E57C2, 100), display = display.none)
+fill(hTop, hBot, color = cBand, title = "RSI 30–70 band")
+// for alerts / data window: colour step (1-5) on the week a divergence confirms, 0 on a new setup low
+plot(newDiv ? divTier : newSetup ? 0 : na, "Divergence colour (1-5)", display = display.data_window)
+// look C: lit RSI line (thick, divergence colour) until RSI closes back above 50
+plot((look == "C · Candle paint" or look == "F · Roof bars" or look == "G · Floor bars") and litTier > 0 ? rsi : na, "Lit RSI (looks C, F, G)", color = f_col(math.max(litTier, 1)), linewidth = 3, style = plot.style_linebr)
+// look C: paint the divergence-low candle (it sits lbR ± the price-match window bars back)
+bool  paintC = look == "C · Candle paint" and newDiv and showPx
+int   dOff   = bar_index - lastPBar
+color cP     = f_col(math.max(divTier, 1))
+barcolor(paintC and dOff == lbR - 3 ? cP : na, offset = -(lbR - 3), title = "Divergence candle −3")
+barcolor(paintC and dOff == lbR - 2 ? cP : na, offset = -(lbR - 2), title = "Divergence candle −2")
+barcolor(paintC and dOff == lbR - 1 ? cP : na, offset = -(lbR - 1), title = "Divergence candle −1")
+barcolor(paintC and dOff == lbR     ? cP : na, offset = -lbR,       title = "Divergence candle")
+barcolor(paintC and dOff == lbR + 1 ? cP : na, offset = -(lbR + 1), title = "Divergence candle +1")
+barcolor(paintC and dOff == lbR + 2 ? cP : na, offset = -(lbR + 2), title = "Divergence candle +2")
+barcolor(paintC and dOff == lbR + 3 ? cP : na, offset = -(lbR + 3), title = "Divergence candle +3")
+
+// ───────────────────────────── ALERTS ─────────────────────────────
+alertcondition(newDiv, "Bullish divergence (any colour)", "Bullish divergence on {{exchange}}:{{ticker}}: weekly RSI higher low while price made a lower low")
+alertcondition(newDiv and divTier >= 4, "Red or dark-red divergence", "Red / dark-red bullish divergence on {{exchange}}:{{ticker}}")
+alertcondition(newDiv and divTier == 5, "Dark-red divergence", "Dark-red bullish divergence on {{exchange}}:{{ticker}}: RSI low above the dark-red level")
+alertcondition(newSetup, "Setup low (RSI at or under the setup level)", "Bullish divergence setup on {{exchange}}:{{ticker}}: weekly RSI swing low at or under the setup level")
+if newDiv
+    alert(f_ord(nDiv) + " bullish divergence (" + f_name(divTier) + ") on " + syminfo.tickerid + " · RSI low " + str.tostring(lastRsi, "#.0") + " · price low " + str.tostring(lastPx, format.mintick), alert.freq_once_per_bar_close)
